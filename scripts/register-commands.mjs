@@ -1,3 +1,7 @@
+import dotenv from "dotenv";
+
+dotenv.config({ path: ".env.local" });
+
 const commands = [
   {
     name: "create-hold",
@@ -10,7 +14,7 @@ const commands = [
         required: true,
       },
       {
-        name: "portal_link",
+        name: "hostaway_portal_link",
         description: "Guest portal link to redirect to after checkout",
         type: 3,
         required: true,
