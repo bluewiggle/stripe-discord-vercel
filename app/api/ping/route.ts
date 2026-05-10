@@ -1,6 +1,6 @@
 export async function GET() {
   return Response.json({
     ok: true,
-    message: "PING ROUTE WORKING",
+    message: "PING ROUTE WORKINuG",
   });
 }
