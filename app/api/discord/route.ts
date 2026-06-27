@@ -76,14 +76,16 @@ async function handleCreateHold(options: DiscordOption[]) {
   const portalLinkRaw = getOption(options, "portal_link");
 
   const amount = Number(amountRaw);
-  const portalLink = String(portalLinkRaw || "").trim();
+  // Normalise the pasted link. Discord wraps URLs in <…> to suppress link
+  // previews, and stray whitespace is common — strip both so a normal paste
+  // is accepted as-is.
+  const portalLink = String(portalLinkRaw || "")
+    .trim()
+    .replace(/^<|>$/g, "")
+    .trim();
 
   if (!amount || amount <= 0) {
     return ephemeral("Invalid amount. Example: `/create-hold amount:300 portal_link:https://...`");
-  }
-
-  if (!portalLink.startsWith("https://")) {
-    return ephemeral("Portal link must start with `https://`.");
   }
 
   const amountCents = Math.round(amount * 100);
