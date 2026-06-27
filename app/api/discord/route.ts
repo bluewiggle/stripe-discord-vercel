@@ -73,7 +73,7 @@ function requireStripeKey() {
 
 async function handleCreateHold(options: DiscordOption[]) {
   const amountRaw = getOption(options, "amount");
-  const portalLinkRaw = getOption(options, "portal_link");
+  const portalLinkRaw = getOption(options, "hostaway_portal_link");
 
   const amount = Number(amountRaw);
   // Normalise the pasted link. Discord wraps URLs in <…> to suppress link
