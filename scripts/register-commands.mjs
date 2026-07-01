@@ -7,48 +7,24 @@ const commands = [
     name: "create-hold",
     description: "Create a Stripe damage deposit authorisation hold link",
     options: [
-      {
-        name: "amount",
-        description: "Hold amount in AUD, e.g. 300",
-        type: 10,
-        required: true,
-      },
-      {
-        name: "hostaway_portal_link",
-        description: "Guest portal link to redirect to after checkout",
-        type: 3,
-        required: true,
-      },
+      { name: "amount", description: "Hold amount in AUD, e.g. 300", type: 10, required: true },
+      { name: "hostaway_portal_link", description: "Guest portal link to redirect to after checkout", type: 3, required: true },
+      { name: "note", description: "Apartment number or note to help you find this later, e.g. Apt 4B", type: 3, required: false },
     ],
   },
   {
     name: "release-hold",
     description: "Release/cancel an uncaptured Stripe authorisation hold",
     options: [
-      {
-        name: "payment_intent_id",
-        description: "Stripe PaymentIntent ID starting with pi_",
-        type: 3,
-        required: true,
-      },
+      { name: "payment_intent_id", description: "Start typing to search saved holds, or paste a PaymentIntent ID (pi_...)", type: 3, required: true, autocomplete: true },
     ],
   },
   {
     name: "capture-hold",
     description: "Capture/charge part or all of a Stripe authorisation hold",
     options: [
-      {
-        name: "payment_intent_id",
-        description: "Stripe PaymentIntent ID starting with pi_",
-        type: 3,
-        required: true,
-      },
-      {
-        name: "amount",
-        description: "Amount to capture in AUD, e.g. 200",
-        type: 10,
-        required: true,
-      },
+      { name: "payment_intent_id", description: "Start typing to search saved holds, or paste a PaymentIntent ID (pi_...)", type: 3, required: true, autocomplete: true },
+      { name: "amount", description: "Amount to capture in AUD, e.g. 200", type: 10, required: true },
     ],
   },
 ];

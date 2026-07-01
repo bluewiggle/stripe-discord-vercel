@@ -9,6 +9,7 @@
     "register:commands": "node scripts/register-commands.mjs"
   },
   "dependencies": {
+    "@upstash/redis": "^1.38.0",
     "discord-interactions": "^4.3.0",
     "dotenv": "^17.4.2",
     "next": "^15.3.0",

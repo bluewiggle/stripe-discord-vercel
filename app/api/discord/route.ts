@@ -5,6 +5,7 @@ import {
   InteractionType,
   verifyKey,
 } from "discord-interactions";
+import { getHold, listOpenHolds, removeHold, saveHold } from "@/lib/holds";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +15,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
 type DiscordOption = {
   name: string;
   value?: string | number | boolean;
+  focused?: boolean;
 };
 
 function jsonResponse(data: unknown, status = 200) {
@@ -21,6 +23,21 @@ function jsonResponse(data: unknown, status = 200) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function autocompleteResponse(choices: { name: string; value: string }[]) {
+  return jsonResponse({
+    type: InteractionResponseType.APPLICATION_COMMAND_AUTOCOMPLETE_RESULT,
+    data: { choices: choices.slice(0, 25) },
+  });
+}
+
+// Builds the label shown in the Discord dropdown, e.g.
+// "$300.00 - Apt 4B (…kX9a)"
+function describeHold(amount: number, note: string, paymentIntentId: string) {
+  const suffix = paymentIntentId.slice(-6);
+  const label = `$${amount.toFixed(2)} - ${note || "no note"} (…${suffix})`;
+  return label.length > 100 ? `${label.slice(0, 97)}...` : label;
 }
 
 function ephemeral(content: string) {
@@ -71,18 +88,17 @@ function requireStripeKey() {
   }
 }
 
-async function handleCreateHold(options: DiscordOption[]) {
+async function handleCreateHold(options: DiscordOption[], userId?: string) {
   const amountRaw = getOption(options, "amount");
   const portalLinkRaw = getOption(options, "hostaway_portal_link");
+  const noteRaw = getOption(options, "note");
 
   const amount = Number(amountRaw);
-  // Normalise the pasted link. Discord wraps URLs in <…> to suppress link
-  // previews, and stray whitespace is common — strip both so a normal paste
-  // is accepted as-is.
   const portalLink = String(portalLinkRaw || "")
     .trim()
     .replace(/^<|>$/g, "")
     .trim();
+  const note = String(noteRaw || "").trim();
 
   if (!amount || amount <= 0) {
     return ephemeral("Invalid amount. Example: `/create-hold amount:300 portal_link:https://...`");
@@ -112,6 +128,7 @@ async function handleCreateHold(options: DiscordOption[]) {
       metadata: {
         type: "damage_deposit_hold",
         guest_portal_link: portalLink,
+        note,
         created_from: "discord",
       },
     },
@@ -119,9 +136,27 @@ async function handleCreateHold(options: DiscordOption[]) {
     cancel_url: portalLink,
   });
 
+  const paymentIntentId = session.payment_intent as string | null;
+
+  if (paymentIntentId) {
+    try {
+      await saveHold({
+        paymentIntentId,
+        amount,
+        note,
+        portalLink,
+        createdAt: Date.now(),
+        createdBy: userId,
+      });
+    } catch (error) {
+      console.error("Failed to save hold for autocomplete:", error);
+    }
+  }
+
   return ephemeral(
     `✅ **Damage deposit hold link created**\n\n` +
       `Amount: **$${amount.toFixed(2)} AUD**\n` +
+      (note ? `Note: **${note}**\n` : "") +
       `Link: ${session.url}\n\n` +
       `After completion, the guest will be redirected to:\n${portalLink}`
   );
@@ -144,9 +179,14 @@ async function handleReleaseHold(options: DiscordOption[]) {
   }
 
   const cancelled = await stripe.paymentIntents.cancel(paymentIntentId);
+  const saved = await getHold(paymentIntentId).catch(() => null);
+  await removeHold(paymentIntentId).catch((error) =>
+    console.error("Failed to remove hold after release:", error)
+  );
 
   return ephemeral(
     `✅ **Hold released/cancelled**\n\n` +
+      (saved?.note ? `Note: **${saved.note}**\n` : "") +
       `PaymentIntent: ${cancelled.id}\n` +
       `Status: ${cancelled.status}`
   );
@@ -187,12 +227,46 @@ async function handleCaptureHold(options: DiscordOption[]) {
   const captured = await stripe.paymentIntents.capture(paymentIntentId, {
     amount_to_capture: amountCents,
   });
+  const saved = await getHold(paymentIntentId).catch(() => null);
+  await removeHold(paymentIntentId).catch((error) =>
+    console.error("Failed to remove hold after capture:", error)
+  );
 
   return ephemeral(
     `✅ **Hold captured/charged**\n\n` +
+      (saved?.note ? `Note: **${saved.note}**\n` : "") +
       `PaymentIntent: ${captured.id}\n` +
       `Status: ${captured.status}\n` +
       `Amount captured: **$${(captured.amount_received / 100).toFixed(2)} AUD**`
+  );
+}
+
+async function handleAutocomplete(options: DiscordOption[]) {
+  const focused = options.find((option) => option.focused);
+  const typed = String(focused?.value ?? "").trim().toLowerCase();
+
+  let holds: Awaited<ReturnType<typeof listOpenHolds>> = [];
+  try {
+    holds = await listOpenHolds();
+  } catch (error) {
+    console.error("Failed to list open holds for autocomplete:", error);
+    return autocompleteResponse([]);
+  }
+
+  const matches = holds.filter((hold) => {
+    if (!typed) return true;
+    return (
+      hold.note.toLowerCase().includes(typed) ||
+      hold.paymentIntentId.toLowerCase().includes(typed) ||
+      String(hold.amount).includes(typed)
+    );
+  });
+
+  return autocompleteResponse(
+    matches.map((hold) => ({
+      name: describeHold(hold.amount, hold.note, hold.paymentIntentId),
+      value: hold.paymentIntentId,
+    }))
   );
 }
 
@@ -214,11 +288,19 @@ export async function POST(req: NextRequest) {
     return jsonResponse({ type: InteractionResponseType.PONG });
   }
 
-  if (interaction.type !== InteractionType.APPLICATION_COMMAND) {
+  if (
+    interaction.type !== InteractionType.APPLICATION_COMMAND &&
+    interaction.type !== InteractionType.APPLICATION_COMMAND_AUTOCOMPLETE
+  ) {
     return ephemeral("Unsupported interaction type.");
   }
 
   const userId = interaction.member?.user?.id || interaction.user?.id;
+
+  if (interaction.type === InteractionType.APPLICATION_COMMAND_AUTOCOMPLETE) {
+    if (!isUserAllowed(userId)) return autocompleteResponse([]);
+    return await handleAutocomplete(interaction.data.options || []);
+  }
 
   if (!isUserAllowed(userId)) {
     return ephemeral("You are not authorised to use this command.");
@@ -230,7 +312,7 @@ export async function POST(req: NextRequest) {
     const commandName = interaction.data.name;
     const options = interaction.data.options || [];
 
-    if (commandName === "create-hold") return await handleCreateHold(options);
+    if (commandName === "create-hold") return await handleCreateHold(options, userId);
     if (commandName === "release-hold") return await handleReleaseHold(options);
     if (commandName === "capture-hold") return await handleCaptureHold(options);
 
