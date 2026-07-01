@@ -9,7 +9,12 @@ const commands = [
     options: [
       { name: "amount", description: "Hold amount in AUD, e.g. 300", type: 10, required: true },
       { name: "hostaway_portal_link", description: "Guest portal link to redirect to after checkout", type: 3, required: true },
-      { name: "note", description: "Apartment number or note to help you find this later, e.g. Apt 4B", type: 3, required: false },
+      {
+        name: "apartment",
+        description: "Apartment number/name, e.g. Apt 4B",
+        type: 3,
+        required: true,
+      },
     ],
   },
   {

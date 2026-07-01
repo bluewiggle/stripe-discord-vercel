@@ -91,7 +91,7 @@ function requireStripeKey() {
 async function handleCreateHold(options: DiscordOption[], userId?: string) {
   const amountRaw = getOption(options, "amount");
   const portalLinkRaw = getOption(options, "hostaway_portal_link");
-  const noteRaw = getOption(options, "note");
+  const noteRaw = getOption(options, "apartment");
 
   const amount = Number(amountRaw);
   const portalLink = String(portalLinkRaw || "")
