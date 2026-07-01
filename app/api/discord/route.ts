@@ -107,58 +107,49 @@ async function handleCreateHold(options: DiscordOption[], userId?: string) {
   const amountCents = Math.round(amount * 100);
 
   const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "aud",
-            product_data: {
-              name: `$${amount.toFixed(2)} AUD Damage Deposit Authorisation`,
-              description: "Temporary card authorisation hold. This is not captured unless required.",
-            },
-            unit_amount: amountCents,
+    mode: "payment",
+    payment_method_types: ["card"],
+    line_items: [
+      {
+        price_data: {
+          currency: "aud",
+          product_data: {
+            name: `$${amount.toFixed(2)} AUD Damage Deposit Authorisation`,
+            description: "Temporary card authorisation hold. This is not captured unless required.",
           },
-          quantity: 1,
+          unit_amount: amountCents,
         },
-      ],
-      payment_intent_data: {
-        capture_method: "manual",
-        description: "Damage deposit authorisation",
-        metadata: {
-          type: "damage_deposit_hold",
-          guest_portal_link: portalLink,
-          note,
-          created_from: "discord",
-        },
+        quantity: 1,
       },
-      success_url: portalLink,
-      cancel_url: portalLink,
-    });
+    ],
+    // Also set on the session itself (not just payment_intent_data) so the
+    // webhook can read amount/note straight off the session without an
+    // extra API call — the PaymentIntent doesn't exist yet at this point.
+    metadata: {
+      type: "damage_deposit_hold",
+      guest_portal_link: portalLink,
+      note,
+      created_from: "discord",
+    },
+    payment_intent_data: {
+      capture_method: "manual",
+      description: "Damage deposit authorisation",
+      metadata: {
+        type: "damage_deposit_hold",
+        guest_portal_link: portalLink,
+        note,
+        created_from: "discord",
+      },
+    },
+    success_url: portalLink,
+    cancel_url: portalLink,
+  });
 
-    const paymentIntentId = session.payment_intent as string | null;
-
-    // Save it so /release-hold and /capture-hold can show a dropdown instead
-    // of needing the raw PaymentIntent ID pasted in. Non-fatal if it fails —
-    // the hold link still works, it just won't autocomplete later.
-    if (paymentIntentId) {
-      console.log(`[create-hold] got paymentIntentId ${paymentIntentId}, attempting save...`);
-      try {
-        await saveHold({
-          paymentIntentId,
-          amount,
-          note,
-          portalLink,
-          createdAt: Date.now(),
-          createdBy: userId,
-        });
-        console.log(`[create-hold] saveHold succeeded for ${paymentIntentId}`);
-      } catch (error) {
-        console.error("[create-hold] Failed to save hold for autocomplete:", error);
-      }
-    } else {
-      console.log("[create-hold] no paymentIntentId on session — skipping save. session.payment_intent was:", session.payment_intent);
-    }
+  // NOTE: session.payment_intent is null at this point — Stripe only
+  // creates the PaymentIntent once the guest actually completes checkout
+  // (this changed in Stripe's 2022-08-01 API version). So the hold can't be
+  // saved here yet. It gets saved by the /api/stripe-webhook handler when
+  // Stripe sends a checkout.session.completed event.
 
   return ephemeral(
     `✅ **Damage deposit hold link created**\n\n` +
@@ -168,7 +159,6 @@ async function handleCreateHold(options: DiscordOption[], userId?: string) {
       `After completion, the guest will be redirected to:\n${portalLink}`
   );
 }
-
 async function handleReleaseHold(options: DiscordOption[]) {
   const paymentIntentId = String(getOption(options, "payment_intent_id") || "").trim();
 
