@@ -34,9 +34,30 @@ function autocompleteResponse(choices: { name: string; value: string }[]) {
 
 // Builds the label shown in the Discord dropdown, e.g.
 // "$300.00 - Apt 4B (…kX9a)"
-function describeHold(amount: number, note: string, paymentIntentId: string) {
+function formatCaptureDeadline(captureBefore?: number) {
+  if (!captureBefore) return "expiry unavailable";
+
+  return new Intl.DateTimeFormat("en-AU", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "Australia/Sydney",
+    timeZoneName: "short",
+  }).format(new Date(captureBefore * 1000));
+}
+
+function describeHold(
+  amount: number,
+  note: string,
+  paymentIntentId: string,
+  captureBefore?: number
+) {
   const suffix = paymentIntentId.slice(-6);
-  const label = `$${amount.toFixed(2)} - ${note || "no note"} (…${suffix})`;
+  const label = `$${amount.toFixed(2)} - ${note || "no note"} - expires ${formatCaptureDeadline(
+    captureBefore
+  )} (…${suffix})`;
   return label.length > 100 ? `${label.slice(0, 97)}...` : label;
 }
 
@@ -131,6 +152,13 @@ async function handleCreateHold(options: DiscordOption[], userId?: string) {
       note,
       created_from: "discord",
     },
+    payment_method_options: {
+      card: {
+        // Requests the longer window where Stripe/card-network eligibility
+        // allows it; ordinary card payments can still complete normally.
+        request_extended_authorization: "if_available",
+      },
+    },
     payment_intent_data: {
       capture_method: "manual",
       description: "Damage deposit authorisation",
@@ -184,6 +212,7 @@ async function handleReleaseHold(options: DiscordOption[]) {
   return ephemeral(
     `✅ **Hold released/cancelled**\n\n` +
       (saved?.note ? `Note: **${saved.note}**\n` : "") +
+      `Capture deadline: **${formatCaptureDeadline(saved?.captureBefore)}**\n` +
       `PaymentIntent: ${cancelled.id}\n` +
       `Status: ${cancelled.status}`
   );
@@ -232,6 +261,7 @@ async function handleCaptureHold(options: DiscordOption[]) {
   return ephemeral(
     `✅ **Hold captured/charged**\n\n` +
       (saved?.note ? `Note: **${saved.note}**\n` : "") +
+      `Capture deadline: **${formatCaptureDeadline(saved?.captureBefore)}**\n` +
       `PaymentIntent: ${captured.id}\n` +
       `Status: ${captured.status}\n` +
       `Amount captured: **$${(captured.amount_received / 100).toFixed(2)} AUD**`
@@ -261,7 +291,7 @@ async function handleAutocomplete(options: DiscordOption[]) {
 
   return autocompleteResponse(
     matches.map((hold) => ({
-      name: describeHold(hold.amount, hold.note, hold.paymentIntentId),
+      name: describeHold(hold.amount, hold.note, hold.paymentIntentId, hold.captureBefore),
       value: hold.paymentIntentId,
     }))
   );

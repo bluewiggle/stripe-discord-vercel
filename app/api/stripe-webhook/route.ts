@@ -40,12 +40,27 @@ export async function POST(req: NextRequest) {
     }
 
     try {
+      // The Checkout Session only tells us that payment completed. Retrieve the
+      // expanded Charge to obtain Stripe's actual capture deadline; do not
+      // assume every requested extended authorisation lasts 30 days.
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId, {
+        expand: ["latest_charge"],
+      });
+      const charge = paymentIntent.latest_charge;
+      const cardDetails =
+        charge && typeof charge !== "string" && charge.payment_method_details?.type === "card"
+          ? charge.payment_method_details.card
+          : undefined;
+
       await saveHold({
         paymentIntentId,
         amount: (session.amount_total ?? 0) / 100,
         note: session.metadata?.note ?? "",
         portalLink: session.metadata?.guest_portal_link ?? "",
         createdAt: Date.now(),
+        captureBefore: cardDetails?.capture_before,
+        cardBrand: cardDetails?.brand ?? undefined,
+        extendedAuthorizationStatus: cardDetails?.extended_authorization?.status,
       });
       console.log(`[stripe-webhook] saved hold for ${paymentIntentId}`);
     } catch (error) {

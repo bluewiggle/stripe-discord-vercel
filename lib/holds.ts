@@ -11,6 +11,11 @@ export type HoldRecord = {
   note: string;
   portalLink: string;
   createdAt: number;
+  // Stripe provides this after the card is authorised. It is the authoritative
+  // deadline for capture, including whether an extended authorisation applied.
+  captureBefore?: number;
+  cardBrand?: string;
+  extendedAuthorizationStatus?: "enabled" | "disabled";
   createdBy?: string;
 };
 
