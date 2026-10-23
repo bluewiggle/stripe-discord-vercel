@@ -66,6 +66,7 @@ function routeHarness(create, validSignature = true) {
     '@/lib/holds': {},
     '@/lib/hold-actions': {},
     '@/lib/create-hold': { createHoldLink: create },
+    '@/lib/checkout-picker': {},
   }, { fetch: async (url, options) => { messages.push({ url, ...JSON.parse(options.body) }); return new Response('{}'); } });
   const request = (user = 'owner') => new Request('https://example.com/api/discord', {
     method: 'POST', headers: { 'x-signature-ed25519': 'signature', 'x-signature-timestamp': '1' },

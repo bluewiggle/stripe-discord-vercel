@@ -198,6 +198,7 @@ function componentHarness() {
     },
     '@/lib/holds': { getHold: async () => hold },
     '@/lib/create-hold': {},
+    '@/lib/checkout-picker': {},
     '@/lib/hold-actions': { matchesReminder, performHoldAction: async (_, input) => { actions.push(input); return 'done'; } },
   }, { fetch: async () => new Response('{}') });
   const request = (type, custom_id, user = 'owner', components = [], channel = REMINDER_CHANNEL_ID) => new Request('https://example.com/api/discord', {

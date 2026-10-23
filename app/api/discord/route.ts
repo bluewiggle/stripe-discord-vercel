@@ -8,6 +8,7 @@ import {
 import { getHold, listOpenHolds } from "@/lib/holds";
 import { matchesReminder, performHoldAction } from "@/lib/hold-actions";
 import { createHoldLink } from "@/lib/create-hold";
+import { checkoutPicker, saveHoldDraft, getHoldDraft, selectCheckoutDate } from "@/lib/checkout-picker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -119,10 +120,10 @@ type DiscordInteraction = {
   channel_id?: string;
   guild_id?: string;
   message?: { id: string };
-  data: { custom_id?: string; components?: any[] };
+  data: { custom_id?: string; components?: any[]; values?: string[] };
 };
 
-function deferredResponse(interaction: DiscordInteraction, work: () => Promise<string>) {
+function deferredResponse(interaction: DiscordInteraction, work: () => Promise<string>, updatePicker = false) {
   after(async () => {
     let content: string;
     try {
@@ -137,7 +138,9 @@ function deferredResponse(interaction: DiscordInteraction, work: () => Promise<s
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+          body: JSON.stringify(updatePicker
+            ? { components: [{ type: 10, content }], allowed_mentions: { parse: [] } }
+            : { content, allowed_mentions: { parse: [] } }),
           signal: AbortSignal.timeout(10000),
         }
       );
@@ -146,10 +149,21 @@ function deferredResponse(interaction: DiscordInteraction, work: () => Promise<s
       console.error("Failed to deliver the Discord hold response.");
     }
   });
-  return jsonResponse({ type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE, data: { flags: 64 } });
+  return jsonResponse(updatePicker
+    ? { type: InteractionResponseType.DEFERRED_UPDATE_MESSAGE }
+    : { type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE, data: { flags: 64 } });
 }
 
-function handleCreateHold(options: DiscordOption[], interaction: DiscordInteraction, userId?: string) {
+async function handleCreateHold(options: DiscordOption[], interaction: DiscordInteraction, userId?: string) {
+  if (!getOption(options, "checkout_date")) {
+    await saveHoldDraft({
+      amount: Number(getOption(options, "amount")), name: String(getOption(options, "name") || ""),
+      interactionId: interaction.id, userId: userId || "",
+      channelId: interaction.channel_id || "", guildId: interaction.guild_id || "",
+    });
+    return jsonResponse({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: checkoutPicker(interaction.id) });
+  }
+  // Support commands already composed before the date-selector rollout.
   return deferredResponse(interaction, () => createHoldLink(stripe, {
     amount: Number(getOption(options, "amount")),
     name: String(getOption(options, "name") ?? getOption(options, "apartment") ?? ""),
@@ -159,6 +173,19 @@ function handleCreateHold(options: DiscordOption[], interaction: DiscordInteract
     channelId: interaction.channel_id,
     guildId: interaction.guild_id,
   }));
+}
+
+async function handleCheckoutPicker(interaction: DiscordInteraction, userId: string) {
+  const match = /^checkout:(month|day):(\d+)(?::(\d{4}-\d{2}-\d{2}))?$/.exec(interaction.data.custom_id || "");
+  if (!match) return ephemeral("Unknown checkout date selection.");
+  const [, action, id, date] = match;
+  const draft = await getHoldDraft(id, userId, interaction.channel_id || "", interaction.guild_id || "");
+  if (action === "month") {
+    if (draft.checkoutDate) return ephemeral("A checkout date has already been selected for this hold.");
+    return jsonResponse({ type: InteractionResponseType.UPDATE_MESSAGE, data: checkoutPicker(id, interaction.data.values?.[0] || "") });
+  }
+  await selectCheckoutDate(id, date || "");
+  return deferredResponse(interaction, () => createHoldLink(stripe, { ...draft, checkoutDate: date! }), true);
 }
 
 function modalAmount(components: any[] = []): string {
@@ -238,7 +265,7 @@ async function handleAutocomplete(options: DiscordOption[]) {
 }
 
 export async function GET() {
-  return jsonResponse({ ok: true, message: "Discord interactions endpoint is live.", holdLinkFlow: "stripe_payment_link", checkoutReminders: true });
+  return jsonResponse({ ok: true, message: "Discord interactions endpoint is live.", holdLinkFlow: "stripe_payment_link", checkoutReminders: true, checkoutDatePicker: true });
 }
 
 export async function POST(req: NextRequest) {
@@ -279,13 +306,16 @@ export async function POST(req: NextRequest) {
     requireStripeKey();
 
     if (interaction.type === InteractionType.MESSAGE_COMPONENT || interaction.type === InteractionType.MODAL_SUBMIT) {
+      if (interaction.type === InteractionType.MESSAGE_COMPONENT && interaction.data.custom_id?.startsWith("checkout:")) {
+        return await handleCheckoutPicker(interaction, userId);
+      }
       return await handleHoldComponent(interaction, interaction.type === InteractionType.MODAL_SUBMIT);
     }
 
     const commandName = interaction.data.name;
     const options = interaction.data.options || [];
 
-    if (commandName === "create-hold") return handleCreateHold(options, interaction, userId);
+    if (commandName === "create-hold") return await handleCreateHold(options, interaction, userId);
     if (commandName === "release-hold" || commandName === "capture-hold") {
       return deferredResponse(interaction, () => performHoldAction(stripe, {
         action: commandName === "release-hold" ? "release" : "capture",

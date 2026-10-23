@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --test scripts/holds.test.cjs scripts/reminders.test.cjs",
+    "test": "node --test scripts/holds.test.cjs scripts/reminders.test.cjs scripts/checkout-picker.test.cjs",
     "register:commands": "node scripts/register-commands.mjs"
   },
   "dependencies": {
