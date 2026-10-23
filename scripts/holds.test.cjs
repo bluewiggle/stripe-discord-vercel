@@ -1,29 +1,9 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
-const ts = require('typescript');
-
-function load(file, mocks = {}, globals = {}) {
-  const filename = path.resolve(__dirname, '..', file);
-  const code = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true },
-  }).outputText;
-  const module = { exports: {} };
-  const context = vm.createContext({
-    module, exports: module.exports,
-    require: name => Object.hasOwn(mocks, name) ? mocks[name] : require(name),
-    Response, Request, AbortSignal, console: { error() {}, log() {} },
-    process: { env: { STRIPE_SECRET_KEY: 'sk_test_fake', DISCORD_PUBLIC_KEY: 'test', AUTHORIZED_DISCORD_USER_IDS: 'owner' } },
-    ...globals,
-  });
-  vm.runInContext(code, context, { filename });
-  return module.exports;
-}
+const { load } = require('./test-helper.cjs');
 
 const { createHoldLink } = load('lib/create-hold.ts');
-const input = { amount: 300, name: ' John Smith ', interactionId: 'interaction-1', userId: 'owner' };
+const input = { amount: 300, name: ' John Smith ', interactionId: 'interaction-1', userId: 'owner', channelId: 'channel', guildId: 'guild', checkoutDate: '28/10/2099' };
 
 test('a hold uses manual capture, one completion, Stripe confirmation, and webhook metadata', async () => {
   const calls = [];
@@ -43,6 +23,9 @@ test('a hold uses manual capture, one completion, Stripe confirmation, and webho
   assert.equal(link.params.metadata.type, 'damage_deposit_hold');
   assert.equal(link.params.metadata.note, 'John Smith');
   assert.equal(link.params.payment_intent_data.metadata.created_by, 'owner');
+  assert.equal(link.params.metadata.checkout_date, '2099-10-28');
+  assert.equal(link.params.metadata.discord_channel_id, 'channel');
+  assert.equal(link.params.metadata.discord_guild_id, 'guild');
   assert.equal('success_url' in link.params, false);
   assert.equal('guest_portal_link' in link.params.metadata, false);
   assert.match(message, /https:\/\/buy\.stripe\.com\/example/);
@@ -81,12 +64,13 @@ function routeHarness(create, validSignature = true) {
       verifyKey: async () => validSignature,
     },
     '@/lib/holds': {},
+    '@/lib/hold-actions': {},
     '@/lib/create-hold': { createHoldLink: create },
   }, { fetch: async (url, options) => { messages.push({ url, ...JSON.parse(options.body) }); return new Response('{}'); } });
   const request = (user = 'owner') => new Request('https://example.com/api/discord', {
     method: 'POST', headers: { 'x-signature-ed25519': 'signature', 'x-signature-timestamp': '1' },
-    body: JSON.stringify({ id: 'interaction-1', application_id: 'app-1', token: 'token', type: 2,
-      member: { user: { id: user } }, data: { name: 'create-hold', options: [{ name: 'amount', value: 300 }, { name: 'name', value: 'John Smith' }] } }),
+    body: JSON.stringify({ id: 'interaction-1', application_id: 'app-1', token: 'token', type: 2, channel_id: 'channel', guild_id: 'guild',
+      member: { user: { id: user } }, data: { name: 'create-hold', options: [{ name: 'amount', value: 300 }, { name: 'name', value: 'John Smith' }, { name: 'checkout_date', value: '28/10/2099' }] } }),
   });
   return { route, callbacks, messages, request };
 }
@@ -125,10 +109,11 @@ test('Payment Link webhook saves an open hold without a portal and ignores relea
   let status = 'requires_capture';
   const event = { type: 'checkout.session.completed', data: { object: {
     payment_intent: 'pi_hold', amount_total: 30000,
-    metadata: { type: 'damage_deposit_hold', note: 'John Smith', created_by: 'owner' },
+    metadata: { type: 'damage_deposit_hold', note: 'John Smith', created_by: 'owner', checkout_date: '2099-10-28', discord_channel_id: 'channel', discord_guild_id: 'guild' },
   } } };
   const route = load('app/api/stripe-webhook/route.ts', {
     'next/server': {},
+    '@/lib/checkout-date': load('lib/checkout-date.ts'),
     stripe: class {
       webhooks = { constructEvent: () => event };
       paymentIntents = { retrieve: async () => ({ status, latest_charge: {
@@ -143,6 +128,10 @@ test('Payment Link webhook saves an open hold without a portal and ignores relea
   assert.equal(saved[0].amount, 300);
   assert.equal(saved[0].captureBefore, 1800000000);
   assert.equal(saved[0].createdBy, 'owner');
+  assert.equal(saved[0].checkoutDate, '2099-10-28');
+  assert.equal(saved[0].channelId, 'channel');
+  assert.equal(saved[0].guildId, 'guild');
+  assert.ok(saved[0].reminderAt > 0);
   assert.equal('portalLink' in saved[0], false);
   status = 'canceled';
   assert.equal((await route.POST(request())).status, 200);

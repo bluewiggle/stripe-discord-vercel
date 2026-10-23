@@ -1,8 +1,9 @@
 import Stripe from "stripe";
+import { checkoutSchedule, displayCheckoutDate } from "./checkout-date";
 
 export async function createHoldLink(
   stripe: Stripe,
-  input: { amount: number; name: string; interactionId: string; userId?: string }
+  input: { amount: number; name: string; checkoutDate: string; interactionId: string; userId?: string; channelId?: string; guildId?: string }
 ) {
   const amountCents = Math.round(input.amount * 100);
   if (!Number.isFinite(input.amount) || amountCents < 50 || amountCents > 99999999) {
@@ -12,12 +13,19 @@ export async function createHoldLink(
   if (!note || note.length > 500) {
     throw new Error("Enter a name between 1 and 500 characters.");
   }
+  const schedule = checkoutSchedule(input.checkoutDate);
+  if (!input.userId || !input.channelId || !input.guildId) {
+    throw new Error("Create this hold in a server channel so the checkout reminder can be sent there.");
+  }
   const amount = (amountCents / 100).toFixed(2);
   const metadata = {
     type: "damage_deposit_hold",
     note,
     created_from: "discord",
     created_by: input.userId || "",
+    checkout_date: schedule.checkoutDate,
+    discord_channel_id: input.channelId,
+    discord_guild_id: input.guildId,
   };
   // Repeated delivery of the same Discord interaction reuses both objects.
   const idempotencyKey = `discord-hold-${input.interactionId}`;
@@ -65,6 +73,8 @@ export async function createHoldLink(
   return `✅ **Damage deposit hold link created**\n\n` +
     `Amount: **$${amount} AUD**\n` +
     `Name: **${note}**\n` +
+    `Checkout: **${displayCheckoutDate(schedule.checkoutDate)}**\n` +
+    `Reminder: <t:${Math.floor(schedule.reminderAt / 1000)}:f> in this channel, mentioning you if the hold is still open.\n` +
     `Link: ${link.url}\n\n` +
     "The guest will see their confirmation on Stripe. This link can be completed once.";
 }

@@ -5,14 +5,15 @@ import {
   InteractionType,
   verifyKey,
 } from "discord-interactions";
-import { getHold, listOpenHolds, removeHold } from "@/lib/holds";
+import { getHold, listOpenHolds } from "@/lib/holds";
+import { matchesReminder, performHoldAction } from "@/lib/hold-actions";
 import { createHoldLink } from "@/lib/create-hold";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, { timeout: 15000, maxNetworkRetries: 1 });
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, { timeout: 10000, maxNetworkRetries: 1 });
 
 type DiscordOption = {
   name: string;
@@ -111,26 +112,25 @@ function requireStripeKey() {
   }
 }
 
-function handleCreateHold(
-  options: DiscordOption[],
-  interaction: { id: string; application_id: string; token: string },
-  userId?: string
-) {
-  // Acknowledge within Discord's three-second limit before calling Stripe twice.
+type DiscordInteraction = {
+  id: string;
+  application_id: string;
+  token: string;
+  channel_id?: string;
+  guild_id?: string;
+  message?: { id: string };
+  data: { custom_id?: string; components?: any[] };
+};
+
+function deferredResponse(interaction: DiscordInteraction, work: () => Promise<string>) {
   after(async () => {
     let content: string;
     try {
-      content = await createHoldLink(stripe, {
-        amount: Number(getOption(options, "amount")),
-        name: String(getOption(options, "name") ?? getOption(options, "apartment") ?? ""),
-        interactionId: interaction.id,
-        userId,
-      });
+      content = await work();
     } catch (error: any) {
-      console.error("Failed to create hold:", error.message);
-      content = `Error: ${error.message || "Could not create the hold link."}`;
+      console.error("Hold command failed:", error.message);
+      content = `Error: ${error.message || "Could not process this hold."}`;
     }
-
     try {
       const response = await fetch(
         `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`,
@@ -141,100 +141,71 @@ function handleCreateHold(
           signal: AbortSignal.timeout(10000),
         }
       );
-      if (!response.ok) {
-        console.error("Failed to update Discord hold response:", response.status);
-      }
+      if (!response.ok) console.error("Failed to update Discord hold response:", response.status);
     } catch {
-      // Do not log the interaction webhook URL/token.
       console.error("Failed to deliver the Discord hold response.");
     }
   });
-
-  return jsonResponse({
-    type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
-    data: { flags: 64 },
-  });
+  return jsonResponse({ type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE, data: { flags: 64 } });
 }
 
-async function handleReleaseHold(options: DiscordOption[]) {
-  const paymentIntentId = String(getOption(options, "payment_intent_id") || "").trim();
-
-  if (!paymentIntentId.startsWith("pi_")) {
-    return ephemeral("Invalid PaymentIntent ID. It should start with `pi_`.");
-  }
-
-  const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-
-  if (paymentIntent.status !== "requires_capture") {
-    return ephemeral(
-      `This hold cannot be released because its status is **${paymentIntent.status}**.\n` +
-        `Only holds with status **requires_capture** can be cancelled/released.`
-    );
-  }
-
-  const cancelled = await stripe.paymentIntents.cancel(paymentIntentId);
-  const saved = await getHold(paymentIntentId).catch(() => null);
-  await removeHold(paymentIntentId).catch((error) =>
-    console.error("Failed to remove hold after release:", error)
-  );
-
-  return ephemeral(
-    `✅ **Hold released/cancelled**\n\n` +
-      (saved?.note ? `Note: **${saved.note}**\n` : "") +
-      `Capture deadline: **${formatCaptureDeadline(saved?.captureBefore)}**\n` +
-      `PaymentIntent: ${cancelled.id}\n` +
-      `Status: ${cancelled.status}`
-  );
+function handleCreateHold(options: DiscordOption[], interaction: DiscordInteraction, userId?: string) {
+  return deferredResponse(interaction, () => createHoldLink(stripe, {
+    amount: Number(getOption(options, "amount")),
+    name: String(getOption(options, "name") ?? getOption(options, "apartment") ?? ""),
+    checkoutDate: String(getOption(options, "checkout_date") || ""),
+    interactionId: interaction.id,
+    userId,
+    channelId: interaction.channel_id,
+    guildId: interaction.guild_id,
+  }));
 }
 
-async function handleCaptureHold(options: DiscordOption[]) {
-  const paymentIntentId = String(getOption(options, "payment_intent_id") || "").trim();
-  const amountRaw = getOption(options, "amount");
-  const amount = Number(amountRaw);
-
-  if (!paymentIntentId.startsWith("pi_")) {
-    return ephemeral("Invalid PaymentIntent ID. It should start with `pi_`.");
+function modalAmount(components: any[] = []): string {
+  for (const item of components) {
+    if (item.custom_id === "amount") return String(item.value ?? "");
+    const nested = modalAmount(item.components || (item.component ? [item.component] : []));
+    if (nested) return nested;
   }
+  return "";
+}
 
-  if (!amount || amount <= 0) {
-    return ephemeral("Invalid amount. Example: `/capture-hold payment_intent_id:pi_... amount:200`");
+async function handleHoldComponent(interaction: DiscordInteraction, isModal: boolean) {
+  const match = /^hold:(release|capture|submit):(pi_[A-Za-z0-9]+)(?::(\d+))?$/.exec(interaction.data.custom_id || "");
+  if (!match || (isModal ? match[1] !== "submit" : match[1] === "submit")) {
+    return ephemeral("Unknown hold action.");
   }
-
-  const amountCents = Math.round(amount * 100);
-
-  const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-
-  if (paymentIntent.status !== "requires_capture") {
-    return ephemeral(
-      `This hold cannot be captured because its status is **${paymentIntent.status}**.\n` +
-        `Only holds with status **requires_capture** can be captured.`
-    );
+  const [, action, paymentIntentId, modalMessageId] = match;
+  const origin = {
+    channelId: interaction.channel_id || "",
+    guildId: interaction.guild_id || "",
+    messageId: isModal ? modalMessageId || "" : interaction.message?.id || "",
+  };
+  if (action === "capture") {
+    const hold = await getHold(paymentIntentId);
+    if (!matchesReminder(hold, origin)) return ephemeral("This reminder is no longer active.");
+    return jsonResponse({
+      type: InteractionResponseType.MODAL,
+      data: {
+        custom_id: `hold:submit:${paymentIntentId}:${origin.messageId}`,
+        title: "Capture deposit hold",
+        components: [{
+          type: 18,
+          label: "Amount to charge (AUD)",
+          description: "This charges the card. Any remaining hold is released.",
+          component: {
+            type: 4, custom_id: "amount", style: 1, required: true,
+            placeholder: `Up to $${hold!.amount.toFixed(2)}`, max_length: 12,
+          },
+        }],
+      },
+    });
   }
-
-  if (amountCents > paymentIntent.amount_capturable) {
-    return ephemeral(
-      `You cannot capture more than the authorised amount.\n\n` +
-        `Requested: **$${amount.toFixed(2)} AUD**\n` +
-        `Capturable: **$${(paymentIntent.amount_capturable / 100).toFixed(2)} AUD**`
-    );
-  }
-
-  const captured = await stripe.paymentIntents.capture(paymentIntentId, {
-    amount_to_capture: amountCents,
-  });
-  const saved = await getHold(paymentIntentId).catch(() => null);
-  await removeHold(paymentIntentId).catch((error) =>
-    console.error("Failed to remove hold after capture:", error)
-  );
-
-  return ephemeral(
-    `✅ **Hold captured/charged**\n\n` +
-      (saved?.note ? `Note: **${saved.note}**\n` : "") +
-      `Capture deadline: **${formatCaptureDeadline(saved?.captureBefore)}**\n` +
-      `PaymentIntent: ${captured.id}\n` +
-      `Status: ${captured.status}\n` +
-      `Amount captured: **$${(captured.amount_received / 100).toFixed(2)} AUD**`
-  );
+  return deferredResponse(interaction, () => performHoldAction(stripe, {
+    action: action === "release" ? "release" : "capture",
+    paymentIntentId, interactionId: interaction.id, origin,
+    ...(isModal ? { amount: modalAmount(interaction.data.components) } : {}),
+  }));
 }
 
 async function handleAutocomplete(options: DiscordOption[]) {
@@ -267,7 +238,7 @@ async function handleAutocomplete(options: DiscordOption[]) {
 }
 
 export async function GET() {
-  return jsonResponse({ ok: true, message: "Discord interactions endpoint is live.", holdLinkFlow: "stripe_payment_link" });
+  return jsonResponse({ ok: true, message: "Discord interactions endpoint is live.", holdLinkFlow: "stripe_payment_link", checkoutReminders: true });
 }
 
 export async function POST(req: NextRequest) {
@@ -286,7 +257,9 @@ export async function POST(req: NextRequest) {
 
   if (
     interaction.type !== InteractionType.APPLICATION_COMMAND &&
-    interaction.type !== InteractionType.APPLICATION_COMMAND_AUTOCOMPLETE
+    interaction.type !== InteractionType.APPLICATION_COMMAND_AUTOCOMPLETE &&
+    interaction.type !== InteractionType.MESSAGE_COMPONENT &&
+    interaction.type !== InteractionType.MODAL_SUBMIT
   ) {
     return ephemeral("Unsupported interaction type.");
   }
@@ -305,12 +278,22 @@ export async function POST(req: NextRequest) {
   try {
     requireStripeKey();
 
+    if (interaction.type === InteractionType.MESSAGE_COMPONENT || interaction.type === InteractionType.MODAL_SUBMIT) {
+      return await handleHoldComponent(interaction, interaction.type === InteractionType.MODAL_SUBMIT);
+    }
+
     const commandName = interaction.data.name;
     const options = interaction.data.options || [];
 
     if (commandName === "create-hold") return handleCreateHold(options, interaction, userId);
-    if (commandName === "release-hold") return await handleReleaseHold(options);
-    if (commandName === "capture-hold") return await handleCaptureHold(options);
+    if (commandName === "release-hold" || commandName === "capture-hold") {
+      return deferredResponse(interaction, () => performHoldAction(stripe, {
+        action: commandName === "release-hold" ? "release" : "capture",
+        paymentIntentId: String(getOption(options, "payment_intent_id") || "").trim(),
+        interactionId: interaction.id,
+        ...(commandName === "capture-hold" ? { amount: String(getOption(options, "amount") ?? "") } : {}),
+      }));
+    }
 
     return ephemeral("Unknown command.");
   } catch (error: any) {

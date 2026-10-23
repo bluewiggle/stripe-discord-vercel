@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import Stripe from "stripe";
 import { saveHold } from "@/lib/holds";
+import { checkoutSchedule } from "@/lib/checkout-date";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,6 +65,11 @@ export async function POST(req: NextRequest) {
           ? { portalLink: session.metadata.guest_portal_link }
           : {}),
         createdBy: session.metadata?.created_by || undefined,
+        ...(session.metadata?.checkout_date
+          ? checkoutSchedule(session.metadata.checkout_date, 0)
+          : {}),
+        channelId: session.metadata?.discord_channel_id || undefined,
+        guildId: session.metadata?.discord_guild_id || undefined,
         createdAt: Date.now(),
         captureBefore: cardDetails?.capture_before,
         cardBrand: cardDetails?.brand ?? undefined,

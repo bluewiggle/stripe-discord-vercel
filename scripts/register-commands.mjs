@@ -16,6 +16,14 @@ const commands = [
         min_length: 1,
         max_length: 500,
       },
+      {
+        name: "checkout_date",
+        description: "Checkout date (DD/MM/YYYY), e.g. 28/10/2026. Reminder two days later at 10 am Sydney time.",
+        type: 3,
+        required: true,
+        min_length: 10,
+        max_length: 10,
+      },
     ],
   },
   {
