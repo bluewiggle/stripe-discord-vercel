@@ -182,7 +182,8 @@ async function handleCheckoutPicker(interaction: DiscordInteraction, userId: str
   const draft = await getHoldDraft(id, userId, interaction.channel_id || "", interaction.guild_id || "");
   if (action === "month") {
     if (draft.checkoutDate) return ephemeral("A checkout date has already been selected for this hold.");
-    return jsonResponse({ type: InteractionResponseType.UPDATE_MESSAGE, data: checkoutPicker(id, interaction.data.values?.[0] || "") });
+    // Refresh older month selectors into the current seven-day selector.
+    return jsonResponse({ type: InteractionResponseType.UPDATE_MESSAGE, data: checkoutPicker(id) });
   }
   await selectCheckoutDate(id, date || "");
   return deferredResponse(interaction, () => createHoldLink(stripe, { ...draft, checkoutDate: date! }), true);
@@ -265,7 +266,7 @@ async function handleAutocomplete(options: DiscordOption[]) {
 }
 
 export async function GET() {
-  return jsonResponse({ ok: true, message: "Discord interactions endpoint is live.", holdLinkFlow: "stripe_payment_link", checkoutReminders: true, checkoutDatePicker: true });
+  return jsonResponse({ ok: true, message: "Discord interactions endpoint is live.", holdLinkFlow: "stripe_payment_link", checkoutReminders: true, checkoutDatePicker: true, checkoutDateWindowDays: 7 });
 }
 
 export async function POST(req: NextRequest) {

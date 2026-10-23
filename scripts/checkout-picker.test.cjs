@@ -1,32 +1,30 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { load } = require('./test-helper.cjs');
-const { checkoutPicker, pickerMonths } = load('lib/checkout-picker.ts', { '@upstash/redis': { Redis: { fromEnv: () => ({}) } } });
+const { checkoutPicker, pickerDates } = load('lib/checkout-picker.ts', { '@upstash/redis': { Redis: { fromEnv: () => ({}) } } });
 
-test('every calendar date is selectable within Discord limits, including leap days', () => {
-  const now = Date.parse('2027-03-01T00:00:00Z');
-  for (const month of pickerMonths(now)) {
-    const picker = checkoutPicker('123', month, now);
-    const children = picker.components.flatMap(row => row.components);
-    assert.ok(picker.components.length + children.length <= 40);
-    assert.ok(picker.components.every(row => row.components.length <= 5));
-    assert.equal(children[0].options.length, 24);
-    assert.equal(children[0].options.filter(x => x.default)[0].value, month);
-    const days = children.filter(c => c.type === 2);
-    const [year, m] = month.split('-').map(Number);
-    assert.equal(days.length, new Date(Date.UTC(year, m, 0)).getUTCDate());
-    assert.equal(new Set(children.map(c => c.custom_id)).size, children.length);
-    if (month === '2028-02') assert.match(days.at(-1).custom_id, /2028-02-29$/);
+test('picker shows exactly seven dates across month, year, leap day and DST boundaries', () => {
+  for (const [start, end] of [['2026-10-28', '2026-11-03'], ['2026-12-28', '2027-01-03'], ['2028-02-27', '2028-03-04'], ['2026-10-02', '2026-10-08'], ['2026-04-03', '2026-04-09']]) {
+    const now = Date.parse(start + 'T01:00:00Z');
+    const dates = pickerDates(now);
+    assert.equal(dates.length, 7);
+    assert.equal(dates[0], start);
+    assert.equal(dates[6], end);
+    const picker = checkoutPicker('123', now);
+    const rows = picker.components.filter(c => c.type === 1);
+    const buttons = rows.flatMap(row => row.components);
+    assert.ok(rows.every(row => row.components.length <= 5));
+    assert.equal(buttons.length, 7);
+    assert.equal(new Set(buttons.map(c => c.custom_id)).size, 7);
+    assert.equal(buttons.map(b => b.custom_id.split(':').at(-1)).join(','), dates.join(','));
+    if (start === '2028-02-27') assert.ok(dates.includes('2028-02-29'));
   }
 });
 
-test('Sydney date rollover disables yesterday and bounds month navigation', () => {
+test('window starts on today in Sydney, even when UTC is still yesterday', () => {
   const now = Date.parse('2026-10-23T14:00:00Z');
-  const days = checkoutPicker('123', '2026-10', now).components.slice(1).flatMap(row => row.components);
-  assert.equal(days[22].disabled, true);
-  assert.equal(days[23].disabled, false);
-  assert.throws(() => checkoutPicker('123', '2026-09', now), /next two years/);
-  assert.throws(() => checkoutPicker('123', 'invalid', now), /next two years/);
+  assert.equal(pickerDates(now)[0], '2026-10-24');
+  assert.equal(pickerDates(now)[6], '2026-10-30');
 });
 
 test('draft ownership, expiry, and a previously selected date are enforced', async () => {
@@ -41,7 +39,10 @@ test('draft ownership, expiry, and a previously selected date are enforced', asy
   for (const args of [['other', 'channel', 'guild'], ['owner', 'other', 'guild'], ['owner', 'channel', 'other']]) {
     await assert.rejects(picker.getHoldDraft('123', ...args), /another hold creator/);
   }
-  const date = pickerMonths()[1] + '-01';
+  const date = pickerDates()[1];
+  const outside = new Date(date + 'T00:00:00Z');
+  outside.setUTCDate(outside.getUTCDate() + 7);
+  await assert.rejects(picker.selectCheckoutDate('123', outside.toISOString().slice(0, 10)), /next 6 days/);
   await picker.selectCheckoutDate('123', date);
   result = -1;
   await assert.rejects(picker.selectCheckoutDate('123', date), /already been selected/);
@@ -84,23 +85,24 @@ test('command opens private picker, navigation creates nothing, day selection de
   assert.equal(reply.type, 4);
   assert.equal(reply.data.flags, 32768 | 64);
   assert.equal(h.creates.length, 0);
-  const month = pickerMonths()[1];
-  const nav = await h.send(3, { custom_id: 'checkout:month:123', values: [month] });
+  const date = pickerDates()[1];
+  const nav = await h.send(3, { custom_id: 'checkout:month:123', values: ['2099-01'] });
   assert.equal(nav.type, 7);
   assert.equal(h.callbacks.length, 0);
-  const selected = await h.send(3, { custom_id: `checkout:day:123:${month}-28` }, 'owner', '456');
+  assert.equal(nav.data.components.filter(c => c.type === 1).flatMap(c => c.components).length, 7);
+  const selected = await h.send(3, { custom_id: `checkout:day:123:${date}` }, 'owner', '456');
   assert.equal(selected.type, 6);
   assert.equal(h.creates.length, 0);
   await h.callbacks[0]();
-  assert.equal(h.creates[0].checkoutDate, `${month}-28`);
+  assert.equal(h.creates[0].checkoutDate, date);
   assert.equal(h.creates[0].interactionId, '123');
   assert.equal(h.creates[0].userId, 'owner');
   assert.equal(h.messages[0].components[0].type, 10);
   assert.equal(h.messages[0].components[0].content, 'Stripe hold link');
   assert.equal('content' in h.messages[0], false);
-  const conflict = await h.send(3, { custom_id: `checkout:day:123:${month}-27` });
+  const conflict = await h.send(3, { custom_id: `checkout:day:123:${pickerDates()[2]}` });
   assert.equal(conflict.type, 4);
   assert.equal(h.callbacks.length, 1);
-  const denied = await h.send(3, { custom_id: `checkout:day:123:${month}-28` }, 'stranger');
+  const denied = await h.send(3, { custom_id: `checkout:day:123:${date}` }, 'stranger');
   assert.match(denied.data.content, /not authorised/);
 });

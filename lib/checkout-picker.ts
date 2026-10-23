@@ -10,38 +10,27 @@ export type HoldDraft = {
   checkoutDate?: string;
 };
 
-export function pickerMonths(now = Date.now()) {
+export function pickerDates(now = Date.now()) {
   const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Australia/Sydney", year: "numeric", month: "2-digit",
+    timeZone: "Australia/Sydney", year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(new Date(now));
   const year = Number(parts.find(p => p.type === "year")!.value);
   const month = Number(parts.find(p => p.type === "month")!.value);
-  return Array.from({ length: 24 }, (_, i) => new Date(Date.UTC(year, month - 1 + i, 1)).toISOString().slice(0, 7));
+  const day = Number(parts.find(p => p.type === "day")!.value);
+  return Array.from({ length: 7 }, (_, i) => new Date(Date.UTC(year, month - 1, day + i)).toISOString().slice(0, 10));
 }
 
-export function checkoutPicker(id: string, month = pickerMonths()[0], now = Date.now()) {
-  const months = pickerMonths(now);
-  if (!months.includes(month)) throw new Error("Choose a checkout month within the next two years.");
-  const [year, m] = month.split("-").map(Number);
-  const days = new Date(Date.UTC(year, m, 0)).getUTCDate();
-  const label = (value: string) => new Intl.DateTimeFormat("en-AU", {
-    timeZone: "UTC", month: "long", year: "numeric",
-  }).format(new Date(`${value}-01T00:00:00Z`));
-  const components: any[] = [{ type: 1, components: [{
-    type: 3, custom_id: `checkout:month:${id}`, placeholder: "Choose checkout month",
-    min_values: 1, max_values: 1,
-    options: months.map(value => ({ label: `Checkout: ${label(value)}`, value, default: value === month })),
-  }] }];
-  for (let first = 1; first <= days; first += 5) {
-    components.push({ type: 1, components: Array.from({ length: Math.min(5, days - first + 1) }, (_, index) => {
-      const date = `${month}-${String(first + index).padStart(2, "0")}`;
-      let disabled = false;
-      try { checkoutSchedule(date, now); } catch { disabled = true; }
-      const weekday = new Intl.DateTimeFormat("en-AU", { timeZone: "UTC", weekday: "short" }).format(new Date(`${date}T00:00:00Z`));
-      return { type: 2, style: 2, label: `${first + index} ${weekday}`, custom_id: `checkout:day:${id}:${date}`, disabled };
+export function checkoutPicker(id: string, now = Date.now()) {
+  const dates = pickerDates(now);
+  const components: any[] = [{ type: 10, content: "**Choose the checkout date**\nToday and the next 6 days · Sydney time" }];
+  for (let first = 0; first < dates.length; first += 4) {
+    components.push({ type: 1, components: dates.slice(first, first + 4).map(date => {
+      const label = new Intl.DateTimeFormat("en-AU", {
+        timeZone: "UTC", weekday: "short", day: "numeric", month: "short",
+      }).format(new Date(`${date}T00:00:00Z`));
+      return { type: 2, style: 2, label, custom_id: `checkout:day:${id}:${date}` };
     }) });
   }
-  // Components V2 permits 40 total components: month row/select + 31 days/7 rows.
   return { flags: 32768 | 64, components, allowed_mentions: { parse: [] } };
 }
 
@@ -63,7 +52,7 @@ export async function getHoldDraft(id: string, userId: string, channelId: string
 
 export async function selectCheckoutDate(id: string, date: string) {
   checkoutSchedule(date);
-  if (!pickerMonths().includes(date.slice(0, 7))) throw new Error("Choose a checkout month within the next two years.");
+  if (!pickerDates().includes(date)) throw new Error("Choose a checkout date from today through the next 6 days in Sydney. Run /create-hold for an updated selector.");
   const result = await redis.eval(`
     local raw = redis.call('GET', KEYS[1])
     if not raw then return 0 end
