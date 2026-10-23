@@ -46,6 +46,10 @@ export async function POST(req: NextRequest) {
       const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId, {
         expand: ["latest_charge"],
       });
+      // A delayed/retried event must not restore an already released or captured hold.
+      if (paymentIntent.status !== "requires_capture") {
+        return new Response("ok", { status: 200 });
+      }
       const charge = paymentIntent.latest_charge;
       const cardDetails =
         charge && typeof charge !== "string" && charge.payment_method_details?.type === "card"
@@ -56,7 +60,10 @@ export async function POST(req: NextRequest) {
         paymentIntentId,
         amount: (session.amount_total ?? 0) / 100,
         note: session.metadata?.note ?? "",
-        portalLink: session.metadata?.guest_portal_link ?? "",
+        ...(session.metadata?.guest_portal_link
+          ? { portalLink: session.metadata.guest_portal_link }
+          : {}),
+        createdBy: session.metadata?.created_by || undefined,
         createdAt: Date.now(),
         captureBefore: cardDetails?.capture_before,
         cardBrand: cardDetails?.brand ?? undefined,

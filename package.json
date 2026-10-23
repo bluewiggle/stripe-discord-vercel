@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "node --test scripts/holds.test.cjs",
     "register:commands": "node scripts/register-commands.mjs"
   },
   "dependencies": {

@@ -1,16 +1,18 @@
-import { NextRequest } from "next/server";
+import { after, NextRequest } from "next/server";
 import Stripe from "stripe";
 import {
   InteractionResponseType,
   InteractionType,
   verifyKey,
 } from "discord-interactions";
-import { getHold, listOpenHolds, removeHold, saveHold } from "@/lib/holds";
+import { getHold, listOpenHolds, removeHold } from "@/lib/holds";
+import { createHoldLink } from "@/lib/create-hold";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, { timeout: 15000, maxNetworkRetries: 1 });
 
 type DiscordOption = {
   name: string;
@@ -109,84 +111,51 @@ function requireStripeKey() {
   }
 }
 
-async function handleCreateHold(options: DiscordOption[], userId?: string) {
-  const amountRaw = getOption(options, "amount");
-  const portalLinkRaw = getOption(options, "hostaway_portal_link");
-  const noteRaw = getOption(options, "apartment");
+function handleCreateHold(
+  options: DiscordOption[],
+  interaction: { id: string; application_id: string; token: string },
+  userId?: string
+) {
+  // Acknowledge within Discord's three-second limit before calling Stripe twice.
+  after(async () => {
+    let content: string;
+    try {
+      content = await createHoldLink(stripe, {
+        amount: Number(getOption(options, "amount")),
+        apartment: String(getOption(options, "apartment") || ""),
+        interactionId: interaction.id,
+        userId,
+      });
+    } catch (error: any) {
+      console.error("Failed to create hold:", error.message);
+      content = `Error: ${error.message || "Could not create the hold link."}`;
+    }
 
-  const amount = Number(amountRaw);
-  const portalLink = String(portalLinkRaw || "")
-    .trim()
-    .replace(/^<|>$/g, "")
-    .trim();
-  const note = String(noteRaw || "").trim();
-
-  if (!amount || amount <= 0) {
-    return ephemeral("Invalid amount. Example: `/create-hold amount:300 portal_link:https://...`");
-  }
-
-  const amountCents = Math.round(amount * 100);
-
-  const session = await stripe.checkout.sessions.create({
-    mode: "payment",
-    payment_method_types: ["card"],
-    line_items: [
-      {
-        price_data: {
-          currency: "aud",
-          product_data: {
-            name: `$${amount.toFixed(2)} AUD Damage Deposit Authorisation`,
-            description: "Temporary card authorisation hold. This is not captured unless required.",
-          },
-          unit_amount: amountCents,
-        },
-        quantity: 1,
-      },
-    ],
-    // Also set on the session itself (not just payment_intent_data) so the
-    // webhook can read amount/note straight off the session without an
-    // extra API call — the PaymentIntent doesn't exist yet at this point.
-    metadata: {
-      type: "damage_deposit_hold",
-      guest_portal_link: portalLink,
-      note,
-      created_from: "discord",
-    },
-    payment_method_options: {
-      card: {
-        // Requests the longer window where Stripe/card-network eligibility
-        // allows it; ordinary card payments can still complete normally.
-        request_extended_authorization: "if_available",
-      },
-    },
-    payment_intent_data: {
-      capture_method: "manual",
-      description: "Damage deposit authorisation",
-      metadata: {
-        type: "damage_deposit_hold",
-        guest_portal_link: portalLink,
-        note,
-        created_from: "discord",
-      },
-    },
-    success_url: portalLink,
-    cancel_url: portalLink,
+    try {
+      const response = await fetch(
+        `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+          signal: AbortSignal.timeout(10000),
+        }
+      );
+      if (!response.ok) {
+        console.error("Failed to update Discord hold response:", response.status);
+      }
+    } catch {
+      // Do not log the interaction webhook URL/token.
+      console.error("Failed to deliver the Discord hold response.");
+    }
   });
 
-  // NOTE: session.payment_intent is null at this point — Stripe only
-  // creates the PaymentIntent once the guest actually completes checkout
-  // (this changed in Stripe's 2022-08-01 API version). So the hold can't be
-  // saved here yet. It gets saved by the /api/stripe-webhook handler when
-  // Stripe sends a checkout.session.completed event.
-
-  return ephemeral(
-    `✅ **Damage deposit hold link created**\n\n` +
-      `Amount: **$${amount.toFixed(2)} AUD**\n` +
-      (note ? `Note: **${note}**\n` : "") +
-      `Link: ${session.url}\n\n` +
-      `After completion, the guest will be redirected to:\n${portalLink}`
-  );
+  return jsonResponse({
+    type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
+    data: { flags: 64 },
+  });
 }
+
 async function handleReleaseHold(options: DiscordOption[]) {
   const paymentIntentId = String(getOption(options, "payment_intent_id") || "").trim();
 
@@ -298,7 +267,7 @@ async function handleAutocomplete(options: DiscordOption[]) {
 }
 
 export async function GET() {
-  return jsonResponse({ ok: true, message: "Discord interactions endpoint is live." });
+  return jsonResponse({ ok: true, message: "Discord interactions endpoint is live.", holdLinkFlow: "stripe_payment_link" });
 }
 
 export async function POST(req: NextRequest) {
@@ -339,7 +308,7 @@ export async function POST(req: NextRequest) {
     const commandName = interaction.data.name;
     const options = interaction.data.options || [];
 
-    if (commandName === "create-hold") return await handleCreateHold(options, userId);
+    if (commandName === "create-hold") return handleCreateHold(options, interaction, userId);
     if (commandName === "release-hold") return await handleReleaseHold(options);
     if (commandName === "capture-hold") return await handleCaptureHold(options);
 

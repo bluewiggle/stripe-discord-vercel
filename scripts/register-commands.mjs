@@ -7,13 +7,14 @@ const commands = [
     name: "create-hold",
     description: "Create a Stripe damage deposit authorisation hold link",
     options: [
-      { name: "amount", description: "Hold amount in AUD, e.g. 300", type: 10, required: true },
-      { name: "hostaway_portal_link", description: "Guest portal link to redirect to after checkout", type: 3, required: true },
+      { name: "amount", description: "Hold amount in AUD, e.g. 300", type: 10, required: true, min_value: 0.5, max_value: 999999.99 },
       {
         name: "apartment",
         description: "Apartment number/name, e.g. Apt 4B",
         type: 3,
         required: true,
+        min_length: 1,
+        max_length: 500,
       },
     ],
   },

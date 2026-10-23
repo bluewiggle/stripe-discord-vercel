@@ -9,7 +9,7 @@ export type HoldRecord = {
   paymentIntentId: string;
   amount: number;
   note: string;
-  portalLink: string;
+  portalLink?: string; // Retained for holds created before Stripe-hosted confirmation.
   createdAt: number;
   // Stripe provides this after the card is authorised. It is the authoritative
   // deadline for capture, including whether an extended authorisation applied.
