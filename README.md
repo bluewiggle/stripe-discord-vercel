@@ -12,7 +12,7 @@ This is a Vercel-ready Next.js app that lets you run Discord slash commands to c
 
 ## How it works
 
-- `/create-hold` takes an AUD amount and `name`, then privately shows seven clickable checkout dates: today and the next six calendar days in Sydney. The selector expires after two hours and rechecks the date window on selection. Selecting a date creates a single-use Stripe Payment Link using `capture_method: manual`. No Hostaway or redirect link is needed. This date limit does not extend Stripe's actual authorisation deadline; a reminder two days after checkout can fall after expiry.
+- `/create-hold` takes an AUD amount and `name`, then privately shows seven clickable checkout dates: tomorrow and the following six calendar days in Sydney. The selector expires after two hours and rechecks the date window on selection. Selecting a date creates a single-use Stripe Payment Link using `capture_method: manual`. No Hostaway or redirect link is needed. This date limit does not extend Stripe's actual authorisation deadline; a reminder two days after checkout can fall after expiry.
 - The guest enters card details and Stripe authorises the card.
 - Stripe shows its own confirmation page: “Your $300.00 AUD damage deposit hold has been authorised. Funds have not been collected. You can screenshot this confirmation and close this page.” The amount matches the hold.
 - The existing `checkout.session.completed` webhook saves the hold for the Discord dropdown, including Stripe's actual capture deadline. Configure this event at `/api/stripe-webhook` and set `STRIPE_WEBHOOK_SECRET` plus `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.

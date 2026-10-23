@@ -266,7 +266,7 @@ async function handleAutocomplete(options: DiscordOption[]) {
 }
 
 export async function GET() {
-  return jsonResponse({ ok: true, message: "Discord interactions endpoint is live.", holdLinkFlow: "stripe_payment_link", checkoutReminders: true, checkoutDatePicker: true, checkoutDateWindowDays: 7 });
+  return jsonResponse({ ok: true, message: "Discord interactions endpoint is live.", holdLinkFlow: "stripe_payment_link", checkoutReminders: true, checkoutDatePicker: true, checkoutDateWindowDays: 7, checkoutDateStartsTomorrow: true });
 }
 
 export async function POST(req: NextRequest) {

@@ -4,12 +4,13 @@ const { load } = require('./test-helper.cjs');
 const { checkoutPicker, pickerDates } = load('lib/checkout-picker.ts', { '@upstash/redis': { Redis: { fromEnv: () => ({}) } } });
 
 test('picker shows exactly seven dates across month, year, leap day and DST boundaries', () => {
-  for (const [start, end] of [['2026-10-28', '2026-11-03'], ['2026-12-28', '2027-01-03'], ['2028-02-27', '2028-03-04'], ['2026-10-02', '2026-10-08'], ['2026-04-03', '2026-04-09']]) {
-    const now = Date.parse(start + 'T01:00:00Z');
+  for (const [today, start, end] of [['2026-10-28', '2026-10-29', '2026-11-04'], ['2026-12-31', '2027-01-01', '2027-01-07'], ['2028-02-28', '2028-02-29', '2028-03-06'], ['2026-10-02', '2026-10-03', '2026-10-09'], ['2026-04-03', '2026-04-04', '2026-04-10']]) {
+    const now = Date.parse(today + 'T01:00:00Z');
     const dates = pickerDates(now);
     assert.equal(dates.length, 7);
     assert.equal(dates[0], start);
     assert.equal(dates[6], end);
+    assert.equal(dates.includes(today), false);
     const picker = checkoutPicker('123', now);
     const rows = picker.components.filter(c => c.type === 1);
     const buttons = rows.flatMap(row => row.components);
@@ -17,14 +18,14 @@ test('picker shows exactly seven dates across month, year, leap day and DST boun
     assert.equal(buttons.length, 7);
     assert.equal(new Set(buttons.map(c => c.custom_id)).size, 7);
     assert.equal(buttons.map(b => b.custom_id.split(':').at(-1)).join(','), dates.join(','));
-    if (start === '2028-02-27') assert.ok(dates.includes('2028-02-29'));
+    if (today === '2028-02-28') assert.ok(dates.includes('2028-02-29'));
   }
 });
 
-test('window starts on today in Sydney, even when UTC is still yesterday', () => {
+test('window starts tomorrow in Sydney, even when UTC is still yesterday', () => {
   const now = Date.parse('2026-10-23T14:00:00Z');
-  assert.equal(pickerDates(now)[0], '2026-10-24');
-  assert.equal(pickerDates(now)[6], '2026-10-30');
+  assert.equal(pickerDates(now)[0], '2026-10-25');
+  assert.equal(pickerDates(now)[6], '2026-10-31');
 });
 
 test('draft ownership, expiry, and a previously selected date are enforced', async () => {
@@ -42,7 +43,10 @@ test('draft ownership, expiry, and a previously selected date are enforced', asy
   const date = pickerDates()[1];
   const outside = new Date(date + 'T00:00:00Z');
   outside.setUTCDate(outside.getUTCDate() + 7);
-  await assert.rejects(picker.selectCheckoutDate('123', outside.toISOString().slice(0, 10)), /next 6 days/);
+  await assert.rejects(picker.selectCheckoutDate('123', outside.toISOString().slice(0, 10)), /following 6 days/);
+  const today = new Date(pickerDates()[0] + 'T00:00:00Z');
+  today.setUTCDate(today.getUTCDate() - 1);
+  await assert.rejects(picker.selectCheckoutDate('123', today.toISOString().slice(0, 10)), /tomorrow/);
   await picker.selectCheckoutDate('123', date);
   result = -1;
   await assert.rejects(picker.selectCheckoutDate('123', date), /already been selected/);

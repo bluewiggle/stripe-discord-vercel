@@ -17,12 +17,12 @@ export function pickerDates(now = Date.now()) {
   const year = Number(parts.find(p => p.type === "year")!.value);
   const month = Number(parts.find(p => p.type === "month")!.value);
   const day = Number(parts.find(p => p.type === "day")!.value);
-  return Array.from({ length: 7 }, (_, i) => new Date(Date.UTC(year, month - 1, day + i)).toISOString().slice(0, 10));
+  return Array.from({ length: 7 }, (_, i) => new Date(Date.UTC(year, month - 1, day + i + 1)).toISOString().slice(0, 10));
 }
 
 export function checkoutPicker(id: string, now = Date.now()) {
   const dates = pickerDates(now);
-  const components: any[] = [{ type: 10, content: "**Choose the checkout date**\nToday and the next 6 days · Sydney time" }];
+  const components: any[] = [{ type: 10, content: "**Choose the checkout date**\nTomorrow and the following 6 days · Sydney time" }];
   for (let first = 0; first < dates.length; first += 4) {
     components.push({ type: 1, components: dates.slice(first, first + 4).map(date => {
       const label = new Intl.DateTimeFormat("en-AU", {
@@ -52,7 +52,7 @@ export async function getHoldDraft(id: string, userId: string, channelId: string
 
 export async function selectCheckoutDate(id: string, date: string) {
   checkoutSchedule(date);
-  if (!pickerDates().includes(date)) throw new Error("Choose a checkout date from today through the next 6 days in Sydney. Run /create-hold for an updated selector.");
+  if (!pickerDates().includes(date)) throw new Error("Choose tomorrow or one of the following 6 days in Sydney. Run /create-hold for an updated selector.");
   const result = await redis.eval(`
     local raw = redis.call('GET', KEYS[1])
     if not raw then return 0 end
