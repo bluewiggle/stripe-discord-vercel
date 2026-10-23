@@ -1,6 +1,5 @@
 import Stripe from "stripe";
 import { checkoutSchedule, displayCheckoutDate } from "./checkout-date";
-import { REMINDER_CHANNEL_ID } from "./reminder-destination";
 
 export async function createHoldLink(
   stripe: Stripe,
@@ -75,7 +74,5 @@ export async function createHoldLink(
     `Amount: **$${amount} AUD**\n` +
     `Name: **${note}**\n` +
     `Checkout: **${displayCheckoutDate(schedule.checkoutDate)}**\n` +
-    `Reminder: <t:${Math.floor(schedule.reminderAt / 1000)}:f> in <#${REMINDER_CHANNEL_ID}>, mentioning you if the hold is still open.\n` +
-    `Link: ${link.url}\n\n` +
-    "The guest will see their confirmation on Stripe. This link can be completed once.";
+    `Link: ${link.url}`;
 }
