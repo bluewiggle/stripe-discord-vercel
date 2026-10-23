@@ -122,7 +122,7 @@ function handleCreateHold(
     try {
       content = await createHoldLink(stripe, {
         amount: Number(getOption(options, "amount")),
-        apartment: String(getOption(options, "apartment") || ""),
+        name: String(getOption(options, "name") ?? getOption(options, "apartment") ?? ""),
         interactionId: interaction.id,
         userId,
       });

@@ -9,8 +9,8 @@ const commands = [
     options: [
       { name: "amount", description: "Hold amount in AUD, e.g. 300", type: 10, required: true, min_value: 0.5, max_value: 999999.99 },
       {
-        name: "apartment",
-        description: "Apartment number/name, e.g. Apt 4B",
+        name: "name",
+        description: "Name for this hold, e.g. John Smith",
         type: 3,
         required: true,
         min_length: 1,

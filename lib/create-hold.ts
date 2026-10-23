@@ -2,15 +2,15 @@ import Stripe from "stripe";
 
 export async function createHoldLink(
   stripe: Stripe,
-  input: { amount: number; apartment: string; interactionId: string; userId?: string }
+  input: { amount: number; name: string; interactionId: string; userId?: string }
 ) {
   const amountCents = Math.round(input.amount * 100);
   if (!Number.isFinite(input.amount) || amountCents < 50 || amountCents > 99999999) {
     throw new Error("Enter an amount between $0.50 and $999,999.99 AUD.");
   }
-  const note = input.apartment.trim();
+  const note = input.name.trim();
   if (!note || note.length > 500) {
-    throw new Error("Enter an apartment name between 1 and 500 characters.");
+    throw new Error("Enter a name between 1 and 500 characters.");
   }
   const amount = (amountCents / 100).toFixed(2);
   const metadata = {
@@ -64,7 +64,7 @@ export async function createHoldLink(
 
   return `✅ **Damage deposit hold link created**\n\n` +
     `Amount: **$${amount} AUD**\n` +
-    `Apartment: **${note}**\n` +
+    `Name: **${note}**\n` +
     `Link: ${link.url}\n\n` +
     "The guest will see their confirmation on Stripe. This link can be completed once.";
 }

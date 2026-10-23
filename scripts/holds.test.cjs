@@ -23,7 +23,7 @@ function load(file, mocks = {}, globals = {}) {
 }
 
 const { createHoldLink } = load('lib/create-hold.ts');
-const input = { amount: 300, apartment: ' Apt 4B ', interactionId: 'interaction-1', userId: 'owner' };
+const input = { amount: 300, name: ' John Smith ', interactionId: 'interaction-1', userId: 'owner' };
 
 test('a hold uses manual capture, one completion, Stripe confirmation, and webhook metadata', async () => {
   const calls = [];
@@ -41,7 +41,7 @@ test('a hold uses manual capture, one completion, Stripe confirmation, and webho
   assert.equal(link.params.after_completion.type, 'hosted_confirmation');
   assert.match(link.params.after_completion.hosted_confirmation.custom_message, /\$300\.00 AUD.*Funds have not been collected/);
   assert.equal(link.params.metadata.type, 'damage_deposit_hold');
-  assert.equal(link.params.metadata.note, 'Apt 4B');
+  assert.equal(link.params.metadata.note, 'John Smith');
   assert.equal(link.params.payment_intent_data.metadata.created_by, 'owner');
   assert.equal('success_url' in link.params, false);
   assert.equal('guest_portal_link' in link.params.metadata, false);
@@ -51,12 +51,12 @@ test('a hold uses manual capture, one completion, Stripe confirmation, and webho
   assert.equal(calls[1].options.idempotencyKey, calls[3].options.idempotencyKey);
 });
 
-test('invalid amounts or missing apartment cannot create Stripe objects', async () => {
+test('invalid amounts or missing name cannot create Stripe objects', async () => {
   for (const amount of [NaN, Infinity, -1, 0, 0.01, 1000000]) {
     await assert.rejects(createHoldLink({}, { ...input, amount }), /Enter an amount/);
   }
-  for (const apartment of ['', '   ', 'a'.repeat(501)]) {
-    await assert.rejects(createHoldLink({}, { ...input, apartment }), /Enter an apartment/);
+  for (const name of ['', '   ', 'a'.repeat(501)]) {
+    await assert.rejects(createHoldLink({}, { ...input, name }), /Enter a name/);
   }
 });
 
@@ -86,14 +86,14 @@ function routeHarness(create, validSignature = true) {
   const request = (user = 'owner') => new Request('https://example.com/api/discord', {
     method: 'POST', headers: { 'x-signature-ed25519': 'signature', 'x-signature-timestamp': '1' },
     body: JSON.stringify({ id: 'interaction-1', application_id: 'app-1', token: 'token', type: 2,
-      member: { user: { id: user } }, data: { name: 'create-hold', options: [{ name: 'amount', value: 300 }, { name: 'apartment', value: 'Apt 4B' }] } }),
+      member: { user: { id: user } }, data: { name: 'create-hold', options: [{ name: 'amount', value: 300 }, { name: 'name', value: 'John Smith' }] } }),
   });
   return { route, callbacks, messages, request };
 }
 
 test('Discord gets a private acknowledgement before Stripe work, followed by the link', async () => {
   let calls = 0;
-  const h = routeHarness(async (_, data) => { calls++; assert.equal(data.interactionId, 'interaction-1'); return 'Hold link'; });
+  const h = routeHarness(async (_, data) => { calls++; assert.equal(data.interactionId, 'interaction-1'); assert.equal(data.name, 'John Smith'); return 'Hold link'; });
   const response = await h.route.POST(h.request());
   assert.deepEqual(await response.json(), { type: 5, data: { flags: 64 } });
   assert.equal(calls, 0);
@@ -125,7 +125,7 @@ test('Payment Link webhook saves an open hold without a portal and ignores relea
   let status = 'requires_capture';
   const event = { type: 'checkout.session.completed', data: { object: {
     payment_intent: 'pi_hold', amount_total: 30000,
-    metadata: { type: 'damage_deposit_hold', note: 'Apt 4B', created_by: 'owner' },
+    metadata: { type: 'damage_deposit_hold', note: 'John Smith', created_by: 'owner' },
   } } };
   const route = load('app/api/stripe-webhook/route.ts', {
     'next/server': {},
