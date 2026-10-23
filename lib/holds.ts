@@ -23,6 +23,7 @@ export type HoldRecord = {
   channelId?: string;
   guildId?: string;
   reminderMessageId?: string;
+  reminderChannelId?: string;
 };
 
 const OPEN_HOLDS_KEY = "holds:open"; // sorted set: score = createdAt, member = pi_id
@@ -70,17 +71,18 @@ export async function retryReminderLater(id: string, now: number) {
   await redis.zadd(REMINDERS_KEY, { score: now + 300000, member: id });
 }
 
-export async function markReminderSent(id: string, messageId: string) {
+export async function markReminderSent(id: string, messageId: string, channelId: string) {
   await redis.eval(`
     local raw = redis.call('GET', KEYS[1])
     if raw then
       local record = cjson.decode(raw)
       record.reminderMessageId = ARGV[2]
+      record.reminderChannelId = ARGV[3]
       redis.call('SET', KEYS[1], cjson.encode(record))
     end
     redis.call('ZREM', KEYS[2], ARGV[1])
     return 1
-  `, [holdKey(id), REMINDERS_KEY], [id, messageId]);
+  `, [holdKey(id), REMINDERS_KEY], [id, messageId, channelId]);
 }
 
 // Used by both reminder delivery and money actions to avoid overlapping work.

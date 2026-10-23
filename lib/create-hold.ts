@@ -1,5 +1,6 @@
 import Stripe from "stripe";
 import { checkoutSchedule, displayCheckoutDate } from "./checkout-date";
+import { REMINDER_CHANNEL_ID } from "./reminder-destination";
 
 export async function createHoldLink(
   stripe: Stripe,
@@ -15,7 +16,7 @@ export async function createHoldLink(
   }
   const schedule = checkoutSchedule(input.checkoutDate);
   if (!input.userId || !input.channelId || !input.guildId) {
-    throw new Error("Create this hold in a server channel so the checkout reminder can be sent there.");
+    throw new Error("Create this hold in a server channel so its creator can be saved for the checkout reminder.");
   }
   const amount = (amountCents / 100).toFixed(2);
   const metadata = {
@@ -74,7 +75,7 @@ export async function createHoldLink(
     `Amount: **$${amount} AUD**\n` +
     `Name: **${note}**\n` +
     `Checkout: **${displayCheckoutDate(schedule.checkoutDate)}**\n` +
-    `Reminder: <t:${Math.floor(schedule.reminderAt / 1000)}:f> in this channel, mentioning you if the hold is still open.\n` +
+    `Reminder: <t:${Math.floor(schedule.reminderAt / 1000)}:f> in <#${REMINDER_CHANNEL_ID}>, mentioning you if the hold is still open.\n` +
     `Link: ${link.url}\n\n` +
     "The guest will see their confirmation on Stripe. This link can be completed once.";
 }

@@ -5,7 +5,7 @@ import { closeReminder } from "./discord-messages";
 type ReminderOrigin = { channelId: string; guildId: string; messageId: string };
 
 export function matchesReminder(hold: holds.HoldRecord | null, origin: ReminderOrigin) {
-  return Boolean(hold && hold.channelId === origin.channelId && hold.guildId === origin.guildId &&
+  return Boolean(hold && (hold.reminderChannelId || hold.channelId) === origin.channelId && hold.guildId === origin.guildId &&
     hold.reminderMessageId && hold.reminderMessageId === origin.messageId);
 }
 

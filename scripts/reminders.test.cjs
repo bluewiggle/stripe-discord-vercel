@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const { load } = require('./test-helper.cjs');
 const { checkoutSchedule } = load('lib/checkout-date.ts');
 const { reminderMessage } = load('lib/discord-messages.ts');
+const { REMINDER_CHANNEL_ID, REMINDER_GUILD_ID } = load('lib/reminder-destination.ts');
 
 test('checkout date schedules 10 am Sydney two calendar days later across both DST transitions', () => {
   const now = Date.parse('2026-01-01T00:00:00Z');
@@ -18,7 +19,7 @@ test('checkout date schedules 10 am Sydney two calendar days later across both D
 });
 
 const record = () => ({ paymentIntentId: 'pi_example', amount: 300, note: 'John @everyone',
-  createdBy: '123', channelId: '456', guildId: '789', checkoutDate: '2026-10-28', reminderAt: 1000, createdAt: 1 });
+  createdBy: '123', channelId: '456', guildId: REMINDER_GUILD_ID, checkoutDate: '2026-10-28', reminderAt: 1000, createdAt: 1 });
 
 test('reminder mentions only its creator and contains release/capture actions', () => {
   const message = reminderMessage(record());
@@ -40,7 +41,7 @@ function workerHarness(status = 'requires_capture', sendError = false) {
     getHold: async () => hold,
     clearReminderQueue: async () => { queued = false; },
     removeHold: async id => { removed.push(id); queued = false; hold = null; },
-    markReminderSent: async (_, id) => { hold.reminderMessageId = id; queued = false; },
+    markReminderSent: async (_, id, channel) => { hold.reminderMessageId = id; hold.reminderChannelId = channel; queued = false; },
     retryReminderLater: async id => retry.push(id),
   };
   const stripe = { paymentIntents: { retrieve: async () => ({ status }) } };
@@ -59,7 +60,36 @@ test('overlapping cron runs and repeated runs send exactly one reminder', async 
   await Promise.all([h.run(), h.run()]);
   await h.run();
   assert.equal(h.sent.length, 1);
-  assert.equal(h.sent[0][0], '/channels/456/messages');
+  assert.equal(h.sent[0][0], `/channels/${REMINDER_CHANNEL_ID}/messages`);
+  assert.equal((await h.store.getHold()).reminderChannelId, REMINDER_CHANNEL_ID);
+  assert.equal((await h.store.getHold()).channelId, '456');
+});
+
+test('holds from a different server never send into the central channel', async () => {
+  const h = workerHarness();
+  h.setHold({ ...record(), guildId: 'other-server' });
+  assert.equal((await h.run()).failed, 1);
+  assert.equal(h.sent.length, 0);
+});
+
+test('resolved reminders edit their actual destination and support older messages', async () => {
+  const calls = [];
+  const { closeReminder } = load('lib/discord-messages.ts', {}, {
+    process: { env: { DISCORD_BOT_TOKEN: 'fake' } },
+    fetch: async (url, options) => { calls.push([url, JSON.parse(options.body)]); return new Response('{}'); },
+  });
+  const hold = { ...record(), reminderMessageId: 'message1' };
+  await closeReminder({ ...hold, reminderChannelId: REMINDER_CHANNEL_ID }, 'released');
+  await closeReminder(hold, 'released');
+  assert.equal(calls[0][0], `https://discord.com/api/v10/channels/${REMINDER_CHANNEL_ID}/messages/message1`);
+  assert.equal(calls[1][0], 'https://discord.com/api/v10/channels/456/messages/message1');
+  assert.equal(calls[0][1].components.length, 0);
+});
+
+test('old reminder buttons remain valid in their original channel', () => {
+  const { matchesReminder } = load('lib/hold-actions.ts', { './holds': {}, './discord-messages': {} });
+  const hold = { ...record(), reminderMessageId: 'message1' };
+  assert.equal(matchesReminder(hold, { channelId: '456', guildId: REMINDER_GUILD_ID, messageId: 'message1' }), true);
 });
 
 test('released, captured, and expired/cancelled holds are not notified', async () => {
@@ -89,7 +119,7 @@ test('delivery failure keeps the reminder queued for retry', async () => {
 });
 
 function actionHarness(status = 'requires_capture') {
-  let hold = { ...record(), reminderMessageId: '123456' }, locked = false;
+  let hold = { ...record(), reminderMessageId: '123456', reminderChannelId: REMINDER_CHANNEL_ID }, locked = false;
   const calls = [], closed = [];
   const store = {
     acquireHoldLock: async () => { if (locked) return null; locked = true; return 'lock'; },
@@ -103,7 +133,7 @@ function actionHarness(status = 'requires_capture') {
     capture: async (...args) => { calls.push(['capture', ...args]); status = 'succeeded'; return { status, amount_received: args[1].amount_to_capture }; },
   } };
   const actions = load('lib/hold-actions.ts', { './holds': store, './discord-messages': { closeReminder: async (...args) => closed.push(args) } });
-  return { ...actions, stripe, calls, closed, input: { paymentIntentId: 'pi_example', interactionId: 'interaction1', origin: { channelId: '456', guildId: '789', messageId: '123456' } } };
+  return { ...actions, stripe, calls, closed, input: { paymentIntentId: 'pi_example', interactionId: 'interaction1', origin: { channelId: REMINDER_CHANNEL_ID, guildId: REMINDER_GUILD_ID, messageId: '123456' } } };
 }
 
 test('release acts once, cleans the hold and removes reminder actions', async () => {
@@ -157,7 +187,7 @@ test('cron endpoint refuses missing/wrong secrets before running any work', asyn
 
 function componentHarness() {
   const callbacks = [], actions = [];
-  const hold = { ...record(), reminderMessageId: '123456' };
+  const hold = { ...record(), reminderMessageId: '123456', reminderChannelId: REMINDER_CHANNEL_ID };
   const { matchesReminder } = load('lib/hold-actions.ts', { './holds': {}, './discord-messages': {} });
   const route = load('app/api/discord/route.ts', {
     'next/server': { after: fn => callbacks.push(fn) }, stripe: class {},
@@ -170,10 +200,10 @@ function componentHarness() {
     '@/lib/create-hold': {},
     '@/lib/hold-actions': { matchesReminder, performHoldAction: async (_, input) => { actions.push(input); return 'done'; } },
   }, { fetch: async () => new Response('{}') });
-  const request = (type, custom_id, user = 'owner', components = [], channel = '456') => new Request('https://example.com/api/discord', {
+  const request = (type, custom_id, user = 'owner', components = [], channel = REMINDER_CHANNEL_ID) => new Request('https://example.com/api/discord', {
     method: 'POST', headers: { 'x-signature-ed25519': 'sig', 'x-signature-timestamp': '1' },
     body: JSON.stringify({ id: 'interaction2', application_id: 'app', token: 'token', type,
-      member: { user: { id: user } }, channel_id: channel, guild_id: '789', message: { id: '123456' }, data: { custom_id, components } }),
+      member: { user: { id: user } }, channel_id: channel, guild_id: REMINDER_GUILD_ID, message: { id: '123456' }, data: { custom_id, components } }),
   });
   return { route, request, callbacks, actions };
 }

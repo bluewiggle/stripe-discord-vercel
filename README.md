@@ -24,7 +24,7 @@ This is a Vercel-ready Next.js app that lets you run Discord slash commands to c
 ## Checkout reminders
 
 - Create holds in a server channel where the bot can send messages. The original creator and channel are saved with the checkout date.
-- At 10 am Australia/Sydney two calendar days after checkout (including daylight-saving changes), the bot sends one reminder in that channel and mentions only the creator. A protected hourly Vercel Cron job processes due reminders; temporary failures are retried on later runs.
+- At 10 am Australia/Sydney two calendar days after checkout (including daylight-saving changes), the bot sends one reminder in **#stripe-payments** and mentions only the creator, regardless of which channel created the hold. This also applies to already queued reminders. The destination is configured in `lib/reminder-destination.ts`. A protected hourly Vercel Cron job processes due reminders; temporary failures are retried on later runs.
 - Stripe is checked immediately before sending. Captured, released, or expired holds are skipped. Existing holds without a checkout date/channel cannot be scheduled retroactively.
 - **Release hold** cancels the authorisation. **Capture amount…** opens a form; submitting it charges that AUD amount and releases the remainder. Both actions retain the existing authorised-user checks and recheck Stripe's current state.
 - Completed actions remove the pending reminder and remove the message's buttons. Redis locks coordinate clicks with reminder delivery, Stripe idempotency keys protect retries, and saved reminder IDs survive webhook retries.

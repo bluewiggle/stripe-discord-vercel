@@ -35,8 +35,9 @@ export function reminderMessage(hold: HoldRecord) {
 }
 
 export async function closeReminder(hold: HoldRecord | null, status: string) {
-  if (!hold?.reminderMessageId || !hold.channelId) return;
-  await discordRequest(`/channels/${hold.channelId}/messages/${hold.reminderMessageId}`, "PATCH", {
+  const channelId = hold?.reminderChannelId || hold?.channelId;
+  if (!hold?.reminderMessageId || !channelId) return;
+  await discordRequest(`/channels/${channelId}/messages/${hold.reminderMessageId}`, "PATCH", {
     content: `✅ **Deposit hold ${status}**\nName: **${hold.note}**\nReference: ${hold.paymentIntentId}`,
     components: [], allowed_mentions: { parse: [] },
   });
