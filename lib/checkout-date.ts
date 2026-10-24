@@ -25,7 +25,7 @@ export function checkoutSchedule(value: string, now = Date.now()) {
     throw new Error("Checkout date cannot be before today in Sydney.");
   }
   // Add calendar days before applying Sydney's offset, so DST is respected.
-  const target = Date.UTC(year, month - 1, day + 2, 10);
+  const target = Date.UTC(year, month - 1, day + 1, 10);
   let reminderAt = target;
   for (let i = 0; i < 3; i++) {
     const p = partsAt(reminderAt);

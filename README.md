@@ -12,7 +12,7 @@ This is a Vercel-ready Next.js app that lets you run Discord slash commands to c
 
 ## How it works
 
-- `/create-hold` takes an AUD amount and `name`, then privately shows seven clickable checkout dates: tomorrow and the following six calendar days in Sydney. The selector expires after two hours and rechecks the date window on selection. Selecting a date creates a single-use Stripe Payment Link using `capture_method: manual`. No Hostaway or redirect link is needed. This date limit does not extend Stripe's actual authorisation deadline; a reminder two days after checkout can fall after expiry.
+- `/create-hold` takes an AUD amount and `name`, then privately shows seven clickable checkout dates: tomorrow and the following six calendar days in Sydney. The selector expires after two hours and rechecks the date window on selection. Selecting a date creates a single-use Stripe Payment Link using `capture_method: manual`. No Hostaway or redirect link is needed. This date limit does not extend Stripe's actual authorisation deadline; a reminder the day after checkout can fall after expiry.
 - The guest enters card details and Stripe authorises the card.
 - Stripe shows its own confirmation page: “Your $300.00 AUD damage deposit hold has been authorised. Funds have not been collected. You can screenshot this confirmation and close this page.” The amount matches the hold.
 - The existing `checkout.session.completed` webhook saves the hold for the Discord dropdown, including Stripe's actual capture deadline. Configure this event at `/api/stripe-webhook` and set `STRIPE_WEBHOOK_SECRET` plus `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
@@ -24,7 +24,7 @@ This is a Vercel-ready Next.js app that lets you run Discord slash commands to c
 ## Checkout reminders
 
 - Create holds in a server channel where the bot can send messages. The original creator and channel are saved with the checkout date.
-- At 10 am Australia/Sydney two calendar days after checkout (including daylight-saving changes), the bot sends one reminder in **#stripe-payments** and mentions only the creator, regardless of which channel created the hold. This also applies to already queued reminders. The destination is configured in `lib/reminder-destination.ts`. A protected hourly Vercel Cron job processes due reminders; temporary failures are retried on later runs.
+- At 10 am Australia/Sydney the calendar day after checkout (including daylight-saving changes), the bot sends one reminder in **#stripe-payments** and mentions only the creator, regardless of which channel created the hold. This also applies to already queued reminders. The destination is configured in `lib/reminder-destination.ts`. A protected hourly Vercel Cron job processes due reminders; temporary failures are retried on later runs.
 - Stripe is checked immediately before sending. Captured, released, or expired holds are skipped. Existing holds without a checkout date/channel cannot be scheduled retroactively.
 - **Release hold** cancels the authorisation. **Capture amount…** opens a form; submitting it charges that AUD amount and releases the remainder. Both actions retain the existing authorised-user checks and recheck Stripe's current state.
 - Completed actions remove the pending reminder and remove the message's buttons. Redis locks coordinate clicks with reminder delivery, Stripe idempotency keys protect retries, and saved reminder IDs survive webhook retries.

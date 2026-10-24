@@ -20,7 +20,7 @@ export function reminderMessage(hold: HoldRecord) {
     content: `<@${hold.createdBy}> **Deposit hold ready for review**\n\n` +
       `Name: **${hold.note}**\nAmount held: **$${hold.amount.toFixed(2)} AUD**\n` +
       `Checkout: **${displayCheckoutDate(hold.checkoutDate!)}**\n` +
-      `It is now at least two days after checkout. Release the hold if no charge is needed.\n` +
+      `Checkout has passed. Release the hold if no charge is needed.\n` +
       (hold.captureBefore ? `Hold expires: <t:${hold.captureBefore}:f>\n` : "") +
       `Reference: ${hold.paymentIntentId}`,
     allowed_mentions: { parse: [], users: [hold.createdBy] },

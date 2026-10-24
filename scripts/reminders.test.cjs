@@ -5,11 +5,12 @@ const { checkoutSchedule } = load('lib/checkout-date.ts');
 const { reminderMessage } = load('lib/discord-messages.ts');
 const { REMINDER_CHANNEL_ID, REMINDER_GUILD_ID } = load('lib/reminder-destination.ts');
 
-test('checkout date schedules 10 am Sydney two calendar days later across both DST transitions', () => {
+test('checkout date schedules 10 am Sydney the next calendar day across both DST transitions', () => {
   const now = Date.parse('2026-01-01T00:00:00Z');
-  assert.equal(new Date(checkoutSchedule('02/10/2026', now).reminderAt).toISOString(), '2026-10-03T23:00:00.000Z');
-  assert.equal(new Date(checkoutSchedule('2026-04-03', now).reminderAt).toISOString(), '2026-04-05T00:00:00.000Z');
-  assert.equal(new Date(checkoutSchedule('30/12/2026', now).reminderAt).toISOString(), '2026-12-31T23:00:00.000Z');
+  assert.equal(new Date(checkoutSchedule('03/10/2026', now).reminderAt).toISOString(), '2026-10-03T23:00:00.000Z');
+  assert.equal(new Date(checkoutSchedule('2026-04-04', now).reminderAt).toISOString(), '2026-04-05T00:00:00.000Z');
+  assert.equal(new Date(checkoutSchedule('31/12/2026', now).reminderAt).toISOString(), '2026-12-31T23:00:00.000Z');
+  assert.equal(new Date(checkoutSchedule('24/10/2026', now).reminderAt).toISOString(), '2026-10-24T23:00:00.000Z');
   assert.equal(checkoutSchedule('28/02/2028', now).checkoutDate, '2028-02-28');
   for (const date of ['31/02/2026', '29/02/2026', '10/28/2026', 'tomorrow', '', '2026-13-01']) {
     assert.throws(() => checkoutSchedule(date, now), /valid checkout date/);
